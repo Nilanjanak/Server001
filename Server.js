@@ -1,4 +1,4 @@
-// server.js
+// Server.js (improved)
 import os from "os";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -36,10 +36,6 @@ import SolutionHeroSecRouter from "./src/Router/SolutionPage/Herosec.js";
 import SolutionSnapshotRouter from "./src/Router/SolutionPage/Snapshot.js";
 import NwdtextRouter from "./src/Router/Global/Hwdtext.js";
 
-
-// If you have a separate Home M&V router, import it here:
-// import HomeMAndVRouter from "./src/Route/Home/MAndV.js";
-
 dotenv.config();
 
 const app = express();
@@ -62,7 +58,6 @@ function getLocalIP() {
   }
   return "127.0.0.1";
 }
-
 const localIP = getLocalIP();
 
 // CORS - dev-friendly list; add production FRONTEND_URL to env and it'll be included
@@ -78,6 +73,13 @@ const allowedOrigins = [
 ];
 
 if (process.env.FRONTEND_URL) allowedOrigins.push(process.env.FRONTEND_URL);
+if (process.env.ADDITIONAL_ORIGINS) {
+  // optional comma-separated additional origins
+  process.env.ADDITIONAL_ORIGINS.split(",").forEach((o) => {
+    const trim = o.trim();
+    if (trim) allowedOrigins.push(trim);
+  });
+}
 
 app.use(
   cors({
@@ -97,6 +99,15 @@ app.use(cookieParser());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// small health endpoint (useful to test on Render)
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    env: process.env.NODE_ENV || "development",
+  });
+});
+
 // Mount routers
 app.use("/api/v1/user", UserRouter);
 app.use("/api/v1/enquiry", EnquiryRouter);
@@ -109,60 +120,74 @@ app.use("/api/v1/founder", FounderRouter);
 app.use("/api/v1/review", ReviewRouter);
 app.use("/api/v1/faq", FAQRouter);
 
-
-
-
 // Home page end points
 app.use("/api/v1/home/banner", BannerRouter);
 app.use("/api/v1/home/aicap", AicapRouter);
-app.use("/api/v1/home/compare",CompareRouter);
-app.use("/api/v1/home/dashsec",DashSecRouter);
-app.use("/api/v1/home/featureshow",FeatureShowcaseRouter);
-app.use("/api/v1/home/focusinto",FocusIntoRouter);
-app.use("/api/v1/home/integration",IntegrationRouter);
-app.use("/api/v1/home/magicbox",MagicBoxRouter);
-app.use("/api/v1/home/testimonial",TestimonialRouter);
-app.use("/api/v1/home/workprocess",WorkprocessRouter);
+app.use("/api/v1/home/compare", CompareRouter);
+app.use("/api/v1/home/dashsec", DashSecRouter);
+app.use("/api/v1/home/featureshow", FeatureShowcaseRouter);
+app.use("/api/v1/home/focusinto", FocusIntoRouter);
+app.use("/api/v1/home/integration", IntegrationRouter);
+app.use("/api/v1/home/magicbox", MagicBoxRouter);
+app.use("/api/v1/home/testimonial", TestimonialRouter);
+app.use("/api/v1/home/workprocess", WorkprocessRouter);
 
 // Product page end points
-app.use("/api/v1/product/feature",ProductFeatureRouter);
-app.use("/api/v1/product/herosec",ProductHerosecRouter);
-app.use("/api/v1/product/snapshot",ProductSnapshotRouter);
+app.use("/api/v1/product/feature", ProductFeatureRouter);
+app.use("/api/v1/product/herosec", ProductHerosecRouter);
+app.use("/api/v1/product/snapshot", ProductSnapshotRouter);
 
 // Resourse page end points
-app.use("/api/v1/resource/explorer",ResourceExplorerRouter);
-app.use("/api/v1/resource/herosec",ResourceHerosecRouter);
-app.use("/api/v1/resource/snapshot",ResourceSnapRouter);
-
+app.use("/api/v1/resource/explorer", ResourceExplorerRouter);
+app.use("/api/v1/resource/herosec", ResourceHerosecRouter);
+app.use("/api/v1/resource/snapshot", ResourceSnapRouter);
 
 // Solution page end points
-app.use("/api/v1/solution/galaxy",GalaxyCardRouter);
-app.use("/api/v1/solution/herosec",SolutionHeroSecRouter);
-app.use("/api/v1/solution/snapshot",SolutionSnapshotRouter);
+app.use("/api/v1/solution/galaxy", GalaxyCardRouter);
+app.use("/api/v1/solution/herosec", SolutionHeroSecRouter);
+app.use("/api/v1/solution/snapshot", SolutionSnapshotRouter);
 
+// Database init and start server
+const DB_URI = process.env.DB_URI || process.env.MONGO_URI || process.env.MONGOURL;
+const DB_NAME = process.env.DB_NAME || process.env.MONGO_DB_NAME || process.env.DB;
 
+if (!DB_URI) {
+  console.warn(
+    "⚠️  No DB_URI detected. Set DB_URI (or MONGO_URI) in environment. Render will load env vars from service settings."
+  );
+}
 
-
-
-
-
-
-
-
-
-
-// app.use("/api/v1/footer", FooterRouter);
-
-
-// If there is a separate home mandv router, mount it instead of re-using MAndVRouter:
-// app.use("/api/v1/home/mandv", HomeMAndVRouter);
-
-DB_Connection(process.env.DB_URI, process.env.DB_NAME)
+DB_Connection(DB_URI, DB_NAME)
   .then(() => {
-    app.listen(PORT, "0.0.0.0", () => {
+    const server = app.listen(PORT, "0.0.0.0", () => {
       console.log(` ✅  Local:   http://localhost:${PORT}`);
       console.log(` ✅ Server is running at http://${localIP}:${PORT}`);
     });
+
+    // graceful shutdown handlers
+    const shutdown = (signal) => {
+      console.log(`🔁 Received ${signal}. Graceful shutdown starting...`);
+      server.close(() => {
+        console.log("✅ HTTP server closed.");
+        // allow DB_Connection module to export a close/disconnect method if available
+        if (DB_Connection && typeof DB_Connection.close === "function") {
+          DB_Connection.close().then(() => {
+            console.log("✅ DB connection closed.");
+            process.exit(0);
+          }).catch(() => process.exit(0));
+        } else {
+          process.exit(0);
+        }
+      });
+      // Force exit after 10s
+      setTimeout(() => {
+        console.error("❌ Could not close connections in time, forcing exit.");
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
   })
   .catch((err) => {
     console.error("❌ Database connection failed:", err);
@@ -171,6 +196,16 @@ DB_Connection(process.env.DB_URI, process.env.DB_NAME)
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
+  console.error("Unhandled error:", err && err.stack ? err.stack : err);
   res.status(500).json({ error: err?.message || "Internal server error" });
+});
+
+// catch unhandled rejections and exceptions
+process.on("unhandledRejection", (reason, p) => {
+  console.error("Unhandled Rejection at Promise:", p, "reason:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception thrown:", err);
+  // optionally exit or let PM2/Render restart; here we exit to let platform restart
+  process.exit(1);
 });
